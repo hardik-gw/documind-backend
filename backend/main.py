@@ -7,13 +7,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from dotenv import load_dotenv
+
+# 🌎 Enforce explicit environment configuration loading sequence on container boot
+load_dotenv()
 
 from backend.services.pdf_processor import PDFProcessor
 from backend.services.vector_store import VectorStoreService
 from backend.services.llm import LLMService
 from backend.services.reranker import RerankerService
 
-# 🌎 Read Environment Variables Safely
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BASE_URL = os.getenv("WEBHOOK_URL")
 
@@ -93,12 +96,15 @@ async def handle_tg_message(update: Update, context):
     thinking_message = await update.message.reply_text("🤔 *Analyzing context vault...*", parse_mode="Markdown")
 
     try:
-        # --- FIX: use llm_service.model directly, not llm_service.client ---
+        # 🎯 FIX: Routes context parsing requests through the synchronized google-genai Client endpoint
         if len(chat_history) > 0:
             history_context = "".join([f"{t['role'].upper()}: {t['text']}\n" for t in chat_history[-4:]])
             contextual_prompt = f"Rewrite to standalone query:\n\n{history_context}\nQuestion: {user_question}"
             try:
-                rewrite_response = llm_service.model.generate_content(contextual_prompt)
+                rewrite_response = llm_service.client.models.generate_content(
+                    model=llm_service.model_name,
+                    contents=contextual_prompt
+                )
                 search_query = rewrite_response.text.strip()
             except Exception:
                 search_query = user_question
