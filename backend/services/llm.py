@@ -7,12 +7,15 @@ class LLMService:
         """
         Initializes the official Google GenAI Client for text generation.
         """
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
+        api_key_env = os.environ.get("GEMINI_API_KEY")
+        if not api_key_env:
             raise ValueError("❌ Error: GEMINI_API_KEY missing from environment variables.")
         
-        # Explicitly pass the API key to the client for safe Render environment loading
-        self.client = genai.Client(api_key=api_key)
+        # Clean any trailing spaces, hidden newlines, or copy-paste quotes
+        clean_key = api_key_env.strip().strip('"').strip("'")
+        
+        # Explicitly pass the validated API key string
+        self.client = genai.Client(api_key=clean_key)
         self.model_name = "gemini-2.5-flash" # High-speed, flagship model
 
     def generate_answer(self, question: str, context_chunks: List[Dict[str, Any]]) -> str:

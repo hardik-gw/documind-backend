@@ -5,8 +5,16 @@ from google import genai
 
 class VectorStoreService:
     def __init__(self):
-        api_key = os.getenv("GEMINI_API_KEY")
-        self.client = genai.Client(api_key=api_key)
+        # Explicitly fetch from the host environment map
+        api_key_env = os.environ.get("GEMINI_API_KEY")
+        if not api_key_env:
+            raise ValueError("❌ Error: GEMINI_API_KEY missing from system environment variables.")
+            
+        # Clean any trailing spaces, hidden newlines, or copy-paste quotes
+        clean_key = api_key_env.strip().strip('"').strip("'")
+        
+        # Force-inject the sanitized token into the client parameter mapping
+        self.client = genai.Client(api_key=clean_key)
         self.model_name = "text-embedding-004"
         
         # Physical backup file path on disk
