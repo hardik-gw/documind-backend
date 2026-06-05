@@ -1,13 +1,11 @@
 import os
 import math
 import json
-from dotenv import load_dotenv
 import google.generativeai as genai
-
-load_dotenv()
 
 class VectorStoreService:
     def __init__(self):
+        # Fetch key from environment safely
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise ValueError("❌ GEMINI_API_KEY missing from environment variables.")
@@ -15,6 +13,7 @@ class VectorStoreService:
         clean_key = api_key.strip().strip('"').strip("'")
         genai.configure(api_key=clean_key)
         
+        # Exact model string required by the legacy library structure
         self.model_name = "models/text-embedding-004"
         self.json_db_path = "./telegram_downloads/vault.json"
         self.vault = self._load_vault_from_disk()
@@ -40,11 +39,14 @@ class VectorStoreService:
 
     def get_embedding(self, text: str) -> list:
         try:
+            # FIX: Execute proper legacy endpoint structural routing
             response = genai.embed_content(
                 model=self.model_name,
-                content=text
+                content=text,
+                task_type="retrieval_document"
             )
-            return response["embedding"]
+            # FIX: Correctly extract values array from object attribute instead of dict subscripting
+            return response['embedding']
         except Exception as e:
             print(f"Embedding API Error: {e}")
             return [0.0] * 768

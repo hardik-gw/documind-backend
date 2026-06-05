@@ -1,9 +1,6 @@
 import os
 from typing import List, Dict, Any
-from dotenv import load_dotenv
 import google.generativeai as genai
-
-load_dotenv()
 
 class LLMService:
     def __init__(self):
