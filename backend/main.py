@@ -17,11 +17,11 @@ from backend.services.reranker import RerankerService
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BASE_URL = os.getenv("WEBHOOK_URL")
 
-# Instantiate core service layers globally
-processor = PDFProcessor()
-db_service = VectorStoreService()
-llm_service = LLMService()
-reranker = RerankerService()
+# Declare placeholders for core service layers globally
+processor: Optional[PDFProcessor] = None
+db_service: Optional[VectorStoreService] = None
+llm_service: Optional[LLMService] = None
+reranker: Optional[RerankerService] = None
 
 PDF_DIR = "./uploaded_docs"
 DOWNLOAD_DIR = "./telegram_downloads"
@@ -48,6 +48,7 @@ async def start_command(update: Update, context):
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
 async def handle_document(update: Update, context):
+    global processor, db_service
     document = update.message.document
     user_id = str(update.message.from_user.id)
     chat_id = update.effective_chat.id
@@ -78,6 +79,7 @@ async def handle_document(update: Update, context):
         await status_message.edit_text(f"❌ Ingestion layer failure: {str(e)}")
 
 async def handle_tg_message(update: Update, context):
+    global db_service, llm_service, reranker
     user_question = update.message.text
     user_id = str(update.message.from_user.id)
     chat_id = update.effective_chat.id
@@ -139,6 +141,14 @@ if tg_app:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handles production startup/shutdown events to coordinate webhooks securely."""
+    global processor, db_service, llm_service, reranker
+    
+    print("🚀 Initializing lightweight service frameworks inside memory...")
+    processor = PDFProcessor()
+    db_service = VectorStoreService()
+    llm_service = LLMService()
+    reranker = RerankerService()
+    
     if tg_app and BASE_URL and not "your-app-name" in BASE_URL:
         webhook_route = f"{BASE_URL}/telegram-webhook"
         print(f"🌐 Activating Production Telegram Webhook pointing to: {webhook_route}")
@@ -148,7 +158,9 @@ async def lifespan(app: FastAPI):
         print("ℹ️ Running in Local Dev Mode. Skipping webhook registration.")
         if tg_app:
             await tg_app.initialize()
+            
     yield
+    
     if tg_app:
         print("🛑 Dropping connections cleanly...")
         await tg_app.shutdown()
@@ -183,7 +195,21 @@ async def telegram_webhook(update_dict: dict):
     return {"status": "processed"}
 
 @app.post("/upload")
-@app.post("/upload")
 async def upload_document(file: UploadFile = File(...), user_id: str = Form("guest_user")):
+    global processor, db_service
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Invalid file format.")
+    
+    # Simple endpoint file handling stub
+    os.makedirs(PDF_DIR, exist_ok=True)
+    file_path = os.path.join(PDF_DIR, f"{user_id}_{file.filename}")
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    try:
+        chunks = processor.process_pdf(file_path)
+        if chunks:
+            db_service.add_chunks(chunks, user_id=user_id)
+        return {"status": "success", "filename": file.filename, "chunks": len(chunks) if chunks else 0}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
