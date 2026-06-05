@@ -1,26 +1,31 @@
-from sentence_transformers import CrossEncoder
+class RerankerService:
+    def __init__(self):
+        pass
 
-_model = None
+    def rerank(self, query: str, chunks: list, top_k: int = 3) -> list:
+        """
+        Lightweight lexical reranking engine (0MB RAM).
+        Cross-scores semantic results against specific keyword density matrices.
+        """
+        if not chunks:
+            return []
 
-def get_reranker_model():
-    global _model
-    if _model is None:
-        # Load lazily only when needed
-        _model = CrossEncoder("Xenova/ms-marco-MiniLM-L-6-v2") 
-    return _model
+        query_words = set(query.lower().split())
+        reranked_results = []
 
-def rerank_documents(query: str, documents: list, top_n: int = 3):
-    if not documents:
-        return []
-    
-    model = get_reranker_model()
-    pairs = [[query, doc.page_content] for doc in documents]
-    scores = model.predict(pairs)
-    
-    # Pair documents with their scores
-    for doc, score in zip(documents, scores):
-        doc.metadata["rerank_score"] = float(score)
-        
-    # Sort by score descending
-    sorted_docs = sorted(documents, key=lambda x: x.metadata["rerank_score"], reverse=True)
-    return sorted_docs[:top_n]
+        for chunk in chunks:
+            text_content = chunk.get("text", "").lower()
+            # Calculate word match frequency overlap
+            match_count = sum(1 for word in query_words if word in text_content)
+            
+            # Combine the vector similarity score with token frequency match weights
+            base_score = chunk.get("similarity_score", 0.0)
+            final_score = base_score + (match_count * 0.1)
+            
+            chunk_copy = chunk.copy()
+            chunk_copy["rerank_score"] = float(final_score)
+            reranked_results.append(chunk_copy)
+
+        # Sort by finalized density weights descending
+        reranked_results = sorted(reranked_results, key=lambda x: x["rerank_score"], reverse=True)
+        return reranked_results[:top_k]

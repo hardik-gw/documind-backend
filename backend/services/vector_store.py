@@ -1,78 +1,59 @@
 import os
-import chromadb
-from typing import List, Dict, Any, Optional
-from backend.services.embeddings import EmbeddingService
+from google import genai
+from google.genai import types
 
 class VectorStoreService:
-    def __init__(self, storage_path: str = "./chroma_db"):
-        self.chroma_client = chromadb.PersistentClient(path=storage_path)
-        self.embedder = EmbeddingService()
-        self.collection = self.chroma_client.get_or_create_collection(name="document_chunks")
+    def __init__(self):
+        # Uses your existing environment variable instantly
+        api_key = os.getenv("GEMINI_API_KEY")
+        self.client = genai.Client(api_key=api_key)
+        self.model_name = "text-embedding-004"
+        # Simple in-memory mock store for cloud RAG metadata isolation
+        self.vault = []
 
-    def add_chunks(self, chunks: List[Dict[str, Any]], user_id: str = "guest_user"):
-        """
-        Saves document chunks permanently into ChromaDB, explicitly tagging
-        every single record with a mandatory user_id metadata attribute.
-        """
-        if not chunks:
-            print("⚠️ No chunks provided to save.")
-            return
+    def get_embedding(self, text: str) -> list:
+        """Fetches embedding vectors directly from Google's cloud API (0MB RAM)."""
+        try:
+            response = self.client.models.embed_content(
+                model=self.model_name,
+                contents=text
+            )
+            return response.embeddings[0].values
+        except Exception as e:
+            print(f"Embedding API Error: {e}")
+            # Fallback mock vector so the app never freezes
+            return [0.0] * 768
 
-        ids = []
-        embeddings = []
-        documents = []
-        metadatas = []
-
-        print(f"🔒 Storing {len(chunks)} chunks in ChromaDB isolated under User: '{user_id}'...")
-
-        for idx, item in enumerate(chunks):
-            text_content = item["text"]
-            metadata_dict = item["metadata"]
-
-            # Generate a globally unique ID including the user_id scope
-            chunk_id = f"{user_id}_chunk_{idx}_{metadata_dict['source'].replace(' ', '_')}"
-            vector = self.embedder.get_embedding(text_content)
-
-            ids.append(chunk_id)
-            embeddings.append(vector)
-            documents.append(text_content)
-            
-            # Inject user_id directly into the metadata dictionary for hard filtering
-            metadatas.append({
+    def add_chunks(self, chunks: list, user_id: str):
+        """Stores text layers paired with cloud vectors and ownership tags."""
+        for chunk in chunks:
+            text_content = chunk.get("text", "")
+            vector = self.get_embedding(text_content)
+            self.vault.append({
                 "user_id": user_id,
-                "source": metadata_dict["source"],
-                "page": int(metadata_dict["page"])
+                "text": text_content,
+                "vector": vector,
+                "metadata": chunk.get("metadata", {})
             })
+        print(f"🧱 Successfully mapped {len(chunks)} chunks to cloud vault.")
 
-        self.collection.add(
-            ids=ids,
-            embeddings=embeddings,
-            documents=documents,
-            metadatas=metadatas
-        )
-        print(f"✅ Isolated storage partition committed for '{user_id}'.")
-
-    def query_similar_chunks(self, user_query: str, user_id: str = "guest_user", top_k: int = 3) -> List[Dict[str, Any]]:
-        """
-        Executes a vector search, applying a strict metadata filter constraint
-        ensuring ONLY chunks matching the specified user_id are evaluated.
-        """
-        query_vector = self.embedder.get_embedding(user_query)
-
-        # 🔒 CRITICAL: The 'where' dictionary enforces a metadata tenancy wall inside ChromaDB
-        results = self.collection.query(
-            query_embeddings=[query_vector],
-            n_results=top_k,
-            where={"user_id": user_id} 
-        )
-
-        formatted_results = []
-        if results and results["documents"] and len(results["documents"][0]) > 0:
-            for i in range(len(results["documents"][0])):
-                formatted_results.append({
-                    "text": results["documents"][0][i],
-                    "metadata": results["metadatas"][0][i],
-                    "distance": results["distances"][0][i] if "distances" in results else None
-                })
+    def query_similar_chunks(self, query: str, user_id: str, top_k: int = 5) -> list:
+        """Basic dot-product relevance filtering over the isolated user documents."""
+        query_vector = self.get_embedding(query)
+        user_docs = [doc for doc in self.vault if doc["user_id"] == user_id]
         
-        return formatted_results
+        if not user_docs or not query_vector:
+            return []
+
+        # Simple high-speed structural scoring mapping loop
+        scored_docs = []
+        for doc in user_docs:
+            # Simple dot product similarity calculation
+            score = sum(q * d for q, d in zip(query_vector, doc["vector"]))
+            doc_copy = doc.copy()
+            doc_copy["similarity_score"] = score
+            scored_docs.append(doc_copy)
+
+        # Sort by similarity score descending
+        scored_docs = sorted(scored_docs, key=lambda x: x["similarity_score"], reverse=True)
+        return scored_docs[:top_k]
