@@ -5,27 +5,23 @@ from google import genai
 
 class VectorStoreService:
     def __init__(self):
-        # Fetch key from environment safely
+        # Read directly from Render's host map
         api_key_env = os.environ.get("GEMINI_API_KEY")
         if not api_key_env:
-            raise ValueError("❌ Error: GEMINI_API_KEY missing from system environment variables.")
+            raise ValueError("❌ Error: GEMINI_API_KEY missing from environment.")
             
-        # Clean any trailing spaces or quotation marks from the Render dashboard paste box
+        # Strip away any hidden artifacts or copy-paste whitespace
         clean_key = api_key_env.strip().strip('"').strip("'")
-        
-        # Inject directly into OS environment map so constructor initializes implicitly without crashing
         os.environ["GEMINI_API_KEY"] = clean_key
         
-        # Initialize official google-genai client flawlessly
+        # Flawless modern SDK setup
         self.client = genai.Client()
         self.model_name = "models/text-embedding-004"
         
-        # Physical backup file path on local server disk
         self.json_db_path = "./telegram_downloads/vault.json"
         self.vault = self._load_vault_from_disk()
 
     def _load_vault_from_disk(self) -> list:
-        """Reads stored chunks from physical disk if they exist."""
         if os.path.exists(self.json_db_path):
             try:
                 with open(self.json_db_path, "r") as f:
@@ -36,7 +32,6 @@ class VectorStoreService:
         return []
 
     def _save_vault_to_disk(self):
-        """Writes current memory vault status directly to local disk storage."""
         try:
             os.makedirs(os.path.dirname(self.json_db_path), exist_ok=True)
             with open(self.json_db_path, "w") as f:
@@ -46,21 +41,18 @@ class VectorStoreService:
             print(f"❌ Failed to save database to disk: {e}")
 
     def get_embedding(self, text: str) -> list:
-        """Fetches embedding vectors directly from Google's cloud API using unified SDK syntax."""
         try:
             response = self.client.models.embed_content(
                 model=self.model_name,
                 contents=text
             )
-            # Extends clean attribute lookup map safely
             return response.embeddings[0].values
         except Exception as e:
             print(f"Embedding API Error: {e}")
             return [0.0] * 768
 
     def add_chunks(self, chunks: list, user_id: str):
-        """Stores text layers paired with cloud vectors globally and commits them to disk."""
-        print(f"📦 Processing ingestion for {len(chunks)} fragments...")
+        print(f"📦 Processing Ingestion Core for {len(chunks)} fragments...")
         self.vault = []
         
         for chunk in chunks:
@@ -77,13 +69,12 @@ class VectorStoreService:
         print(f"🧱 Successfully committed {len(self.vault)} chunks directly to disk database.")
 
     def query_similar_chunks(self, query: str, user_id: str, top_k: int = 5) -> list:
-        """Calculates Cosine Similarity over the data reloaded fresh from disk."""
         self.vault = self._load_vault_from_disk()
         query_vector = self.get_embedding(query)
         user_docs = self.vault  
         
         if not user_docs or not query_vector:
-            print(f"⚠️ Query Warning: Vault is physically empty on disk. Content count: {len(user_docs)}")
+            print(f"⚠️ Query Warning: Vault is physically empty on disk.")
             return []
 
         query_magnitude = math.sqrt(sum(q * q for q in query_vector))
