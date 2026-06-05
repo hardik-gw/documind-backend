@@ -17,7 +17,6 @@ from backend.services.reranker import RerankerService
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BASE_URL = os.getenv("WEBHOOK_URL")
 
-# Declare placeholders for core service layers globally to prevent top-level execution crashes
 processor: Optional[PDFProcessor] = None
 db_service: Optional[VectorStoreService] = None
 llm_service: Optional[LLMService] = None
@@ -31,7 +30,6 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 BOT_CHAT_HISTORY: Dict[int, List[Dict[str, str]]] = {}
 SESSION_STORAGE: Dict[str, List[Dict[str, str]]] = {}
 
-# 🤖 Create the Telegram Application instance
 tg_app = Application.builder().token(TOKEN).build() if TOKEN else None
 
 # --- TELEGRAM BOT EVENT HANDLERS ---
@@ -63,18 +61,21 @@ async def handle_document(update: Update, context):
         local_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_{document.file_name}")
         await tg_file.download_to_drive(local_path)
         
-        await status_message.edit_text("⚡ *File grabbed! Tokenizing layout chunks...*")
+        await status_message.edit_text("⚡ *File grabbed! Tokenizing layout chunks...*", parse_mode="Markdown")
         chunks = processor.process_pdf(local_path)
         
         if not chunks:
             await status_message.edit_text("⚠️ Processing failed. No text layers could be safely extracted.")
             return
             
-        await status_message.edit_text("🧱 *Running vector mappings & user isolation tags...*")
+        await status_message.edit_text("🧱 *Running vector mappings & user isolation tags...*", parse_mode="Markdown")
         db_service.add_chunks(chunks, user_id=user_id)
         
         BOT_CHAT_HISTORY[chat_id] = []
-        await status_message.edit_text(f"✅ *Ingestion successful!*\n📄 Document: `{document.file_name}`\n\n👉 Ask me anything!")
+        await status_message.edit_text(
+            f"✅ *Ingestion successful!*\n📄 Document: `{document.file_name}`\n\n👉 Ask me anything!",
+            parse_mode="Markdown"
+        )
     except Exception as e:
         await status_message.edit_text(f"❌ Ingestion layer failure: {str(e)}")
 
@@ -92,11 +93,12 @@ async def handle_tg_message(update: Update, context):
     thinking_message = await update.message.reply_text("🤔 *Analyzing context vault...*", parse_mode="Markdown")
 
     try:
+        # --- FIX: use llm_service.model directly, not llm_service.client ---
         if len(chat_history) > 0:
             history_context = "".join([f"{t['role'].upper()}: {t['text']}\n" for t in chat_history[-4:]])
             contextual_prompt = f"Rewrite to standalone query:\n\n{history_context}\nQuestion: {user_question}"
             try:
-                rewrite_response = llm_service.client.models.generate_content(model=llm_service.model_name, contents=contextual_prompt)
+                rewrite_response = llm_service.model.generate_content(contextual_prompt)
                 search_query = rewrite_response.text.strip()
             except Exception:
                 search_query = user_question
@@ -106,14 +108,16 @@ async def handle_tg_message(update: Update, context):
             await thinking_message.edit_text("ℹ️ *No documents found. Please upload a PDF first!*", parse_mode="Markdown")
             return
             
-        # This matches the updated lightweight RerankerService method signature
         reranked_fragments = reranker.rerank(query=search_query, chunks=candidates, top_k=3)
         
         try:
             ai_response = llm_service.generate_answer(user_question, reranked_fragments)
         except Exception as api_err:
             if "503" in str(api_err) or "UNAVAILABLE" in str(api_err):
-                await thinking_message.edit_text("🚦 *Google's API is currently experiencing a traffic spike. Please retry in a moment!*", parse_mode="Markdown")
+                await thinking_message.edit_text(
+                    "🚦 *Google's API is currently experiencing a traffic spike. Please retry in a moment!*",
+                    parse_mode="Markdown"
+                )
             else:
                 await thinking_message.edit_text("⚠️ *The AI synthesis layer hit a temporary connection timeout.*")
             return
@@ -132,7 +136,6 @@ async def handle_tg_message(update: Update, context):
     except Exception as e:
         await thinking_message.edit_text(f"❌ Failure during internal analysis loop: {str(e)}")
 
-# Bind events to our Telegram app background model
 if tg_app:
     tg_app.add_handler(CommandHandler("start", start_command))
     tg_app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
@@ -141,32 +144,30 @@ if tg_app:
 # --- LIFECYCLE WEBHOOK HOOKS ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Handles production startup/shutdown events to coordinate webhooks securely."""
     global processor, db_service, llm_service, reranker
     
-    print("🚀 Initializing lightweight service frameworks inside memory...")
+    print("🚀 Initializing service layers...")
     processor = PDFProcessor()
     db_service = VectorStoreService()
     llm_service = LLMService()
     reranker = RerankerService()
     
-    if tg_app and BASE_URL and not "your-app-name" in BASE_URL:
+    if tg_app and BASE_URL and "your-app-name" not in BASE_URL:
         webhook_route = f"{BASE_URL}/telegram-webhook"
-        print(f"🌐 Activating Production Telegram Webhook pointing to: {webhook_route}")
+        print(f"🌐 Webhook active: {webhook_route}")
         await tg_app.initialize()
         await tg_app.bot.set_webhook(url=webhook_route)
     else:
-        print("ℹ️ Running in Local Dev Mode. Skipping webhook registration.")
+        print("ℹ️ Local Dev Mode — skipping webhook registration.")
         if tg_app:
             await tg_app.initialize()
             
     yield
     
     if tg_app:
-        print("🛑 Dropping connections cleanly...")
+        print("🛑 Shutting down cleanly...")
         await tg_app.shutdown()
 
-# Initialize FastAPI with the lifecycle manager bound
 app = FastAPI(title="DocuMind Production RAG API", lifespan=lifespan)
 
 app.add_middleware(
@@ -189,7 +190,6 @@ async def root():
 
 @app.post("/telegram-webhook")
 async def telegram_webhook(update_dict: dict):
-    """The endpoint where Telegram forwards incoming traffic via POST requests."""
     if tg_app:
         update = Update.de_json(update_dict, tg_app.bot)
         await tg_app.process_update(update)

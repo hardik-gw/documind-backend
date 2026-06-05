@@ -7,11 +7,9 @@ from backend.services.vector_store import VectorStoreService
 from backend.services.llm import LLMService
 from backend.services.reranker import RerankerService
 
-# Load environment coordinates
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Instantiate identical architectural elements from our core pipeline
 processor = PDFProcessor()
 db_service = VectorStoreService()
 llm_service = LLMService()
@@ -20,11 +18,9 @@ reranker = RerankerService()
 DOWNLOAD_DIR = "./telegram_downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# Shared memory chat log buffer tracking multi-turn sequences per chat session
 BOT_CHAT_HISTORY = {}
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Greets the user and initializes an empty sliding memory log window."""
     chat_id = update.effective_chat.id
     BOT_CHAT_HISTORY[chat_id] = []
     
@@ -39,9 +35,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Intercepts uploaded PDF attachments, runs layout segmentations, and tags chunks with Telegram IDs."""
     document = update.message.document
-    user_id = str(update.message.from_user.id) # 🔒 Key isolation point: Use unique Telegram numeric ID!
+    user_id = str(update.message.from_user.id)
     chat_id = update.effective_chat.id
     
     if not document.file_name.endswith('.pdf'):
@@ -55,26 +50,26 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_path = os.path.join(DOWNLOAD_DIR, f"{user_id}_{document.file_name}")
         await tg_file.download_to_drive(local_path)
         
-        await status_message.edit_text("⚡ *File grabbed! Initializing text-layout segmentation...*")
+        await status_message.edit_text("⚡ *File grabbed! Initializing text-layout segmentation...*", parse_mode="Markdown")
         chunks = processor.process_pdf(local_path)
         
         if not chunks:
             await status_message.edit_text("⚠️ Processing failed. No text layers could be safely extracted.")
             return
             
-        await status_message.edit_text(f"🧱 *Generated {len(chunks)} structural fragments. Running vector mappings...*")
-        
-        # Day 9 User Isolation: Commit chunks bound strictly to this sender's ID
+        await status_message.edit_text(
+            f"🧱 *Generated {len(chunks)} structural fragments. Running vector mappings...*",
+            parse_mode="Markdown"
+        )
         db_service.add_chunks(chunks, user_id=user_id)
-        
-        # Clear rolling conversation history whenever a fresh document context is established
         BOT_CHAT_HISTORY[chat_id] = []
         
         await status_message.edit_text(
             f"✅ *Ingestion successful!*\n"
             f"📄 Document: `{document.file_name}`\n"
             f"🔒 Isolated under your secure personal session ID.\n\n"
-            f"👉 Go ahead and ask me any question about this document!"
+            f"👉 Go ahead and ask me any question about this document!",
+            parse_mode="Markdown"
         )
         
     except Exception as e:
@@ -82,7 +77,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_message.edit_text(f"❌ Critical ingestion layer failure: {str(e)}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles text questions, rewrites multi-turn nuances, scores context relevance, and generates answers."""
     user_question = update.message.text
     user_id = str(update.message.from_user.id)
     chat_id = update.effective_chat.id
@@ -96,7 +90,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thinking_message = await update.message.reply_text("🤔 *Analyzing context vault...*", parse_mode="Markdown")
 
     try:
-        # Day 8: Query Contextualization Layer
+        # --- FIX: use llm_service.model directly ---
         if len(chat_history) > 0:
             history_context = "".join([f"{t['role'].upper()}: {t['text']}\n" for t in chat_history[-4:]])
             contextual_prompt = (
@@ -105,74 +99,70 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Chat History:\n{history_context}\nNew Question: {user_question}\n\nStandalone Query:"
             )
             try:
-                rewrite_response = llm_service.client.models.generate_content(
-                    model=llm_service.model_name, contents=contextual_prompt
-                )
+                rewrite_response = llm_service.model.generate_content(contextual_prompt)
                 search_query = rewrite_response.text.strip()
             except Exception as e:
-                # Fallback to the raw question if query rewriting hits an error to keep the pipeline alive
-                print(f"⚠️ Contextualizer hit a snag, falling back to raw query: {e}")
+                print(f"⚠️ Contextualizer fallback to raw query: {e}")
                 search_query = user_question
 
-        # Day 10 Two-Stage Retrieval Phase 1: Fetch top 10 isolated candidates
         candidates = db_service.query_similar_chunks(search_query, user_id=user_id, top_k=10)
         
         if not candidates:
-            await thinking_message.edit_text("ℹ️ *I couldn't find any documents bound to your user scope. Please upload a PDF file first!*", parse_mode="Markdown")
+            await thinking_message.edit_text(
+                "ℹ️ *I couldn't find any documents bound to your user scope. Please upload a PDF file first!*",
+                parse_mode="Markdown"
+            )
             return
             
-        # Day 10 Two-Stage Retrieval Phase 2: Local Cross-Encoder Reranking
         reranked_fragments = reranker.rerank(query=search_query, chunks=candidates, top_k=3)
         
-        # Day 5: Synthesize final cited text summary block with explicit API error trapping
         try:
             ai_response = llm_service.generate_answer(user_question, reranked_fragments)
         except Exception as api_err:
-            print(f"💥 Gemini API Network Error: {api_err}")
+            print(f"💥 Gemini API Error: {api_err}")
             if "503" in str(api_err) or "UNAVAILABLE" in str(api_err):
                 await thinking_message.edit_text(
-                    "🚦 *Google's API is currently experiencing a massive traffic spike (503 Unavailable).* \n\n"
-                    "Your documents are perfectly safe and vectorized. Please wait a minute and send your question again!",
+                    "🚦 *Google's API is currently experiencing a traffic spike.*\n\n"
+                    "Your documents are safe. Please retry in a moment!",
                     parse_mode="Markdown"
                 )
             else:
-                await thinking_message.edit_text("⚠️ *The AI synthesis layer encountered a temporary connection issue. Please try your question again shortly.*")
+                await thinking_message.edit_text(
+                    "⚠️ *The AI synthesis layer encountered a temporary issue. Please try again shortly.*"
+                )
             return
         
-        # Build clean structural citations footer block for the chat layout
         citation_text = "\n\n📌 *Sources & Relevance Metrics:*"
         for idx, chunk in enumerate(reranked_fragments):
             score = chunk.get("rerank_score", 0.0)
-            page = chunk["metadata"]["page"]
-            preview = chunk["text"][:60].replace('\n', ' ') + "..."
+            page = chunk.get("metadata", {}).get("page", "Unknown")
+            preview = chunk.get("text", "")[:60].replace('\n', ' ') + "..."
             citation_text += f"\n• *[{idx+1}]* Page {page} | Relevance Score: `{score:.2f}`\n   _{preview}_"
             
         final_payload = f"{ai_response}{citation_text}"
         
-        # Update memory state arrays
         BOT_CHAT_HISTORY[chat_id].append({"role": "user", "text": user_question})
         BOT_CHAT_HISTORY[chat_id].append({"role": "model", "text": ai_response})
         
         await thinking_message.edit_text(final_payload, parse_mode="Markdown")
         
     except Exception as e:
-        print(f"💥 Generic Bot interaction error: {e}")
-        await thinking_message.edit_text(f"❌ Failure during analysis loop: Simple processing exception occurred.")
+        print(f"💥 Generic bot error: {e}")
+        await thinking_message.edit_text("❌ Failure during analysis loop. Please try again.")
 
 def main():
     if not TOKEN:
-        print("❌ Critical Error: TELEGRAM_BOT_TOKEN missing from environment configurations.")
+        print("❌ TELEGRAM_BOT_TOKEN missing from environment.")
         return
         
-    print("🤖 Launching Integrated DocuMind Telegram Engine Core...")
+    print("🤖 Launching DocuMind Telegram Bot...")
     app = Application.builder().token(TOKEN).build()
     
-    # Map event routing boundaries
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    print("🚀 Bot is live and actively listening for incoming stream data...")
+    print("🚀 Bot live and polling...")
     app.run_polling()
 
 if __name__ == "__main__":
