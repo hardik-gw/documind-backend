@@ -17,7 +17,7 @@ from backend.services.reranker import RerankerService
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 BASE_URL = os.getenv("WEBHOOK_URL")
 
-# Declare placeholders for core service layers globally
+# Declare placeholders for core service layers globally to prevent top-level execution crashes
 processor: Optional[PDFProcessor] = None
 db_service: Optional[VectorStoreService] = None
 llm_service: Optional[LLMService] = None
@@ -106,6 +106,7 @@ async def handle_tg_message(update: Update, context):
             await thinking_message.edit_text("ℹ️ *No documents found. Please upload a PDF first!*", parse_mode="Markdown")
             return
             
+        # This matches the updated lightweight RerankerService method signature
         reranked_fragments = reranker.rerank(query=search_query, chunks=candidates, top_k=3)
         
         try:
@@ -120,8 +121,8 @@ async def handle_tg_message(update: Update, context):
         citation_text = "\n\n📌 *Sources & Relevance Metrics:*"
         for idx, chunk in enumerate(reranked_fragments):
             score = chunk.get("rerank_score", 0.0)
-            page = chunk["metadata"]["page"]
-            preview = chunk["text"][:60].replace('\n', ' ') + "..."
+            page = chunk["metadata"]["page"] if "metadata" in chunk and "page" in chunk["metadata"] else "Unknown"
+            preview = chunk.get("text", "")[:60].replace('\n', ' ') + "..."
             citation_text += f"\n• *[{idx+1}]* Page {page} | Relevance: `{score:.2f}`\n   _{preview}_"
             
         final_payload = f"{ai_response}{citation_text}"
@@ -129,7 +130,7 @@ async def handle_tg_message(update: Update, context):
         BOT_CHAT_HISTORY[chat_id].append({"role": "model", "text": ai_response})
         await thinking_message.edit_text(final_payload, parse_mode="Markdown")
     except Exception as e:
-        await thinking_message.edit_text("❌ Failure during internal analysis loop.")
+        await thinking_message.edit_text(f"❌ Failure during internal analysis loop: {str(e)}")
 
 # Bind events to our Telegram app background model
 if tg_app:
@@ -200,7 +201,6 @@ async def upload_document(file: UploadFile = File(...), user_id: str = Form("gue
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Invalid file format.")
     
-    # Simple endpoint file handling stub
     os.makedirs(PDF_DIR, exist_ok=True)
     file_path = os.path.join(PDF_DIR, f"{user_id}_{file.filename}")
     with open(file_path, "wb") as buffer:
