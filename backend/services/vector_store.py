@@ -5,17 +5,15 @@ from google import genai
 
 class VectorStoreService:
     def __init__(self):
-        # Read directly from Render's host map
+        # Safely extract from Render's host control panel
         api_key_env = os.environ.get("GEMINI_API_KEY")
         if not api_key_env:
-            raise ValueError("❌ Error: GEMINI_API_KEY missing from environment.")
+            raise ValueError("❌ Error: GEMINI_API_KEY missing from environment variables.")
             
-        # Strip away any hidden artifacts or copy-paste whitespace
         clean_key = api_key_env.strip().strip('"').strip("'")
-        os.environ["GEMINI_API_KEY"] = clean_key
         
-        # Flawless modern SDK setup
-        self.client = genai.Client()
+        # 🎯 FORCE DIRECT ROUTING: Overrides auto-detected GCP credentials explicitly
+        self.client = genai.Client(api_key=clean_key)
         self.model_name = "models/text-embedding-004"
         
         self.json_db_path = "./telegram_downloads/vault.json"

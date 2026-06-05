@@ -4,25 +4,17 @@ from google import genai
 
 class LLMService:
     def __init__(self):
-        """
-        Initializes the official Google GenAI Client for text generation.
-        """
         api_key_env = os.environ.get("GEMINI_API_KEY")
         if not api_key_env:
             raise ValueError("❌ Error: GEMINI_API_KEY missing from environment variables.")
         
         clean_key = api_key_env.strip().strip('"').strip("'")
-        os.environ["GEMINI_API_KEY"] = clean_key
         
-        # Uses explicit SDK client routing hooks matching main.py declarations
-        self.client = genai.Client()
+        # 🎯 FORCE DIRECT ROUTING: Overrides auto-detected GCP credentials explicitly
+        self.client = genai.Client(api_key=clean_key)
         self.model_name = "gemini-2.5-flash" 
 
     def generate_answer(self, question: str, context_chunks: List[Dict[str, Any]]) -> str:
-        """
-        Combines the user question and retrieved document context into a professional
-        system prompt, then asks Gemini to generate a synthesized answer.
-        """
         context_text = ""
         for idx, chunk in enumerate(context_chunks):
             metadata = chunk.get("metadata", {})
