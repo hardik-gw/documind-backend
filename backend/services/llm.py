@@ -1,10 +1,6 @@
 import os
 from typing import List, Dict, Any
-from dotenv import load_dotenv
 from google import genai
-
-# Load environment variables from your secret .env file
-load_dotenv()
 
 class LLMService:
     def __init__(self):
@@ -13,25 +9,28 @@ class LLMService:
         """
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            raise ValueError("❌ Error: GEMINI_API_KEY missing from your .env file.")
+            raise ValueError("❌ Error: GEMINI_API_KEY missing from environment variables.")
         
-        self.client = genai.Client()
-        self.model_name = "gemini-2.5-flash" # High-speed, long-context flagship model
+        # Explicitly pass the API key to the client for safe Render environment loading
+        self.client = genai.Client(api_key=api_key)
+        self.model_name = "gemini-2.5-flash" # High-speed, flagship model
 
     def generate_answer(self, question: str, context_chunks: List[Dict[str, Any]]) -> str:
         """
         Combines the user question and retrieved document context into a professional
-        system prompt, then asks Gemini 1.5 Flash to generate a synthesized answer.
+        system prompt, then asks Gemini to generate a synthesized answer.
         """
-        # 1. Format the retrieved database chunks into a clear text block for the LLM
         context_text = ""
         for idx, chunk in enumerate(context_chunks):
-            source = chunk["metadata"]["source"]
-            page = chunk["metadata"]["page"]
+            # Safely navigate metadata dict layers using .get() fallbacks to prevent KeyErrors
+            metadata = chunk.get("metadata", {})
+            source = metadata.get("source", "Unknown Document")
+            page = metadata.get("page", "1")
+            
             context_text += f"\n--- Source Document Fragment #{idx+1} (File: {source}, Page: {page}) ---\n"
-            context_text += f"{chunk['text']}\n"
+            context_text += f"{chunk.get('text', '')}\n"
 
-        # 2. Build the System Instruction / Prompt Engineering boundary
+        # System Instruction / Prompt Engineering boundary
         system_instruction = (
             "You are DocuMind, an elite, professional document analysis AI assistant.\n"
             "Your task is to answer the user's question using ONLY the provided Source Document Fragments below.\n"
@@ -42,11 +41,10 @@ class LLMService:
             "3. If the context does not contain the answer, say cleanly: 'I cannot find the answer in the uploaded documents.'"
         )
 
-        # 3. Combine it into a structured payload
         user_message = f"Context Documents:\n{context_text}\n\nUser Question: {question}"
 
         try:
-            print("🧠 Synthesizing answer with Gemini 1.5 Flash...")
+            print("🧠 Synthesizing answer with Gemini...")
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=user_message,
@@ -56,32 +54,3 @@ class LLMService:
         except Exception as e:
             print(f"❌ Error communicating with generation layer: {e}")
             raise e
-
-# ==========================================
-# DAY 5 INTEGRATED PIPELINE RUNNER
-# ==========================================
-if __name__ == "__main__":
-    from backend.services.vector_store import VectorStoreService
-    
-    print("🚀 Running Full RAG Pipeline Test (Retrieval + Generation)...")
-    
-    # 1. Initialize the components
-    db_service = VectorStoreService()
-    llm_service = LLMService()
-    
-    # 2. Define the question
-    test_question = "Tell me about Hardik's experience with FastAPI and what he built with it."
-    print(f"\n1️⃣ User Question: '{test_question}'")
-    
-    # 3. Step 1 of RAG: Retrieve matching fragments from ChromaDB
-    print("2️⃣ Querying ChromaDB for relevant information...")
-    matched_fragments = db_service.query_similar_chunks(test_question, top_k=2)
-    
-    # 4. Step 2 of RAG: Pass fragments + question to Gemini for the finalized response
-    print("3️⃣ Sending data to generation layer...")
-    final_answer = llm_service.generate_answer(test_question, matched_fragments)
-    
-    print("\n🎯 FINAL DOCUMIND AI RESPONSE:")
-    print("=" * 60)
-    print(final_answer)
-    print("=" * 60)
