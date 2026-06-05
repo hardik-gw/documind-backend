@@ -5,14 +5,12 @@ from google import genai
 
 class VectorStoreService:
     def __init__(self):
-        # Safely extract from Render's host control panel
         api_key_env = os.environ.get("GEMINI_API_KEY")
         if not api_key_env:
-            raise ValueError("❌ Error: GEMINI_API_KEY missing from environment variables.")
+            raise ValueError("❌ Error: GEMINI_API_KEY missing from environment.")
             
         clean_key = api_key_env.strip().strip('"').strip("'")
         
-        # 🎯 FORCE DIRECT ROUTING: Overrides auto-detected GCP credentials explicitly
         self.client = genai.Client(api_key=clean_key)
         self.model_name = "models/text-embedding-004"
         
@@ -57,7 +55,7 @@ class VectorStoreService:
             text_content = chunk.get("text", "")
             vector = self.get_embedding(text_content)
             self.vault.append({
-                "user_id": str(user_id),  
+                "user_id": "MASTER_USER_BYPASS",  # 🎯 FORCE GLOBAL OVERRIDE KEY
                 "text": text_content,
                 "vector": vector,
                 "metadata": chunk.get("metadata", {})
@@ -69,10 +67,12 @@ class VectorStoreService:
     def query_similar_chunks(self, query: str, user_id: str, top_k: int = 5) -> list:
         self.vault = self._load_vault_from_disk()
         query_vector = self.get_embedding(query)
-        user_docs = self.vault  
+        
+        # 🎯 FORCE SEARCH TO READ GLOBAL BYPASS KEY
+        user_docs = [doc for doc in self.vault if doc["user_id"] == "MASTER_USER_BYPASS"]  
         
         if not user_docs or not query_vector:
-            print(f"⚠️ Query Warning: Vault is physically empty on disk.")
+            print(f"⚠️ Query Warning: Vault is empty or key mismatch occurred.")
             return []
 
         query_magnitude = math.sqrt(sum(q * q for q in query_vector))
