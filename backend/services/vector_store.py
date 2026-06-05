@@ -15,6 +15,8 @@ class VectorStoreService:
         
         # Force-inject the sanitized token into the client parameter mapping
         self.client = genai.Client(api_key=clean_key)
+        
+        # 🎯 SWAPPED: Correct, fully supported text embedding engine identifier string
         self.model_name = "text-embedding-004"
         
         # Physical backup file path on disk
@@ -44,6 +46,7 @@ class VectorStoreService:
     def get_embedding(self, text: str) -> list:
         """Fetches embedding vectors directly from Google's cloud API."""
         try:
+            # Enforce exact SDK text extraction format
             response = self.client.models.embed_content(
                 model=self.model_name,
                 contents=text
